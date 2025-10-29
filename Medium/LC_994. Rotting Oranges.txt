@@ -1,0 +1,28 @@
+/**
+ * @param {number[][]} grid
+ * @return {number}
+ */
+var orangesRotting = function(grid) {
+    
+};
+
+let grid = [[2,1,1],[1,1,0],[0,1,1]];
+console.log(orangesRotting(grid));
+
+
+#approach :
+
+count = 0;
+i = 0 , j = 0;
+
+while(i != grid.length && j != grid[0].length):
+
+    if ( grid[i][j] == 2 ) :
+        if (grid[i - 1][j] != 0)grid[i - 1][j] = 2
+        if (grid[i + 1][j] != 0)grid[i + 1][j] = 2
+        if (grid[i ][j + 1]!= 0)grid[i ][j + 1] = 2
+        if (grid[i ][j - 1]!= 0)grid[i ][j - 1] = 2
+        count ++;
+    i++ , j++
+
+return count
