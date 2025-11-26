@@ -1,12 +1,31 @@
-function linearSearch(arr, target, index,temp) {
-    if (arr[index] == target && index < arr.length ){
-      temp.push(index);
+/**
+ * @param {number} x
+ * @return {number}
+ */
+var mySqrt = function(x) {
+    if (x < 2) return x;
+    
+    let start = 0; 
+    let end = x;
+    let result = 0;
+
+    while(start <= end){
+        let mid = Math.floor(start + (end - start) / 2);
+        
+        if (mid * mid === x){
+            return mid;
+        } else if (mid * mid < x){
+            result = mid;  // Store this as potential answer
+            start = mid + 1;  // Search in right half
+        } else {
+            end = mid - 1;  // Search in left half
+        }
     }
+    
+    return result;
+};
 
-    if ( index == arr.length) return temp;
+console.log(mySqrt(25
 
-    return linearSearch(arr ,target, index + 1 , temp);
-
-}
-
-console.log(linearSearch([1, 2, 45, 1, 8, 2, 15], 2, 0, []));
+    
+));
