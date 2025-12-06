@@ -1,0 +1,549 @@
+{
+  "name": "Unstructured Data to SQL Pipeline (Free Tier)",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {
+          "messageType": [
+            "document",
+            "photo"
+          ]
+        }
+      },
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "4a6f7b8c-9d0e-1f2a-3b4c-5d6e7f8a9b0c",
+      "credentials": {
+        "telegramApi": {
+          "id": "5",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getFile",
+        "fileId": "={{ $json.document.file_id || $json.photo[$json.photo.length - 1].file_id }}",
+        "download": true
+      },
+      "name": "Download Telegram File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        460,
+        300
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "5",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "fileName",
+              "value": "={{ $json.document ? $json.document.file_name : 'photo_' + $json.message_id + '.jpg' }}",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "mimeType",
+              "value": "={{ $json.document ? $json.document.mime_type : 'image/jpeg' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Normalize File Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false
+          },
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ $json.mimeType }}",
+              "rightValue": "image",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            },
+            {
+              "id": "2",
+              "leftValue": "={{ $json.name }}",
+              "rightValue": ".jpg|.jpeg|.png|.gif|.bmp|.tiff",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "name": "Is Image or Scanned PDF?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        680,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://vision.googleapis.com/v1/images:annotate?key={{ $credentials.geminiApiKey }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"requests\": [{\n    \"image\": {\n      \"content\": \"{{ $binary.data.data }}\"\n    },\n    \"features\": [{\n      \"type\": \"DOCUMENT_TEXT_DETECTION\",\n      \"maxResults\": 1\n    }]\n  }]\n}",
+        "options": {}
+      },
+      "name": "Google Cloud Vision OCR",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        900,
+        200
+      ],
+      "credentials": {
+        "geminiApiKey": {
+          "id": "6",
+          "name": "Google AI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract text from PDF using binary data\nconst items = [];\n\nfor (const item of $input.all()) {\n  try {\n    const binaryData = await this.helpers.getBinaryDataBuffer(item.binary.data);\n    \n    // Simple text extraction for text-based PDFs\n    // For production, consider using pdf-parse npm package\n    let pdfText = '';\n    \n    // Basic PDF text extraction (works for simple text PDFs)\n    const text = binaryData.toString('utf-8');\n    \n    // Extract text between stream objects (simplified approach)\n    const matches = text.match(/stream([\\s\\S]*?)endstream/g);\n    if (matches) {\n      pdfText = matches\n        .map(m => m.replace(/stream|endstream/g, ''))\n        .join(' ')\n        .replace(/[^\\x20-\\x7E\\n]/g, ' ') // Remove non-printable chars\n        .replace(/\\s+/g, ' ')\n        .trim();\n    }\n    \n    // Fallback: try direct conversion\n    if (!pdfText || pdfText.length < 50) {\n      pdfText = text.replace(/[^\\x20-\\x7E\\n]/g, ' ').replace(/\\s+/g, ' ').trim();\n    }\n    \n    items.push({\n      json: {\n        extractedText: pdfText,\n        fileName: item.json.name,\n        mimeType: item.json.mimeType,\n        extractionMethod: 'pdf_text_extraction'\n      }\n    });\n  } catch (error) {\n    items.push({\n      json: {\n        extractedText: '',\n        fileName: item.json.name || 'unknown',\n        error: error.message,\n        extractionMethod: 'pdf_text_extraction_failed'\n      }\n    });\n  }\n}\n\nreturn items;"
+      },
+      "name": "Extract PDF Text",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1",
+              "name": "extractedText",
+              "value": "={{ $json.responses[0].fullTextAnnotation.text }}",
+              "type": "string"
+            },
+            {
+              "id": "2",
+              "name": "fileName",
+              "value": "={{ $('Download File').item.json.name }}",
+              "type": "string"
+            },
+            {
+              "id": "3",
+              "name": "extractionMethod",
+              "value": "google_cloud_vision",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Format OCR Output",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        1120,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll"
+      },
+      "name": "Merge Paths",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        1340,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={{ $credentials.geminiApiKey }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"You are a data extraction expert. Extract invoice information from the following text and return ONLY valid JSON (no markdown, no code blocks, no explanation).\\n\\nRequired JSON Schema:\\n{\\n  \\\"invoiceNumber\\\": \\\"string\\\",\\n  \\\"invoiceDate\\\": \\\"YYYY-MM-DD\\\",\\n  \\\"vendorName\\\": \\\"string\\\",\\n  \\\"lineItems\\\": [\\n    {\\n      \\\"description\\\": \\\"string\\\",\\n      \\\"quantity\\\": number,\\n      \\\"unitPrice\\\": number,\\n      \\\"amount\\\": number\\n    }\\n  ],\\n  \\\"totalAmount\\\": number,\\n  \\\"currency\\\": \\\"string\\\"\\n}\\n\\nIMPORTANT RULES:\\n1. Return ONLY the JSON object, nothing else\\n2. Ensure all amounts are numbers (not strings)\\n3. Date must be in YYYY-MM-DD format\\n4. Each line item's amount should equal quantity × unitPrice\\n5. If any field is missing, use null\\n\\nText to extract from:\\n{{ $json.extractedText }}\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.1,\n    \"topK\": 1,\n    \"topP\": 0.95,\n    \"maxOutputTokens\": 2048\n  }\n}",
+        "options": {}
+      },
+      "name": "Gemini Extract Structured Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1560,
+        300
+      ],
+      "credentials": {
+        "geminiApiKey": {
+          "id": "6",
+          "name": "Google AI API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini response and validate invoice data\nconst items = [];\n\nfor (const item of $input.all()) {\n  try {\n    // Extract text from Gemini response\n    let responseText = '';\n    \n    if (item.json.candidates && item.json.candidates[0]) {\n      const content = item.json.candidates[0].content;\n      if (content && content.parts && content.parts[0]) {\n        responseText = content.parts[0].text;\n      }\n    }\n    \n    if (!responseText) {\n      throw new Error('No response text from Gemini API');\n    }\n    \n    // Clean potential markdown code blocks\n    const cleanContent = responseText\n      .replace(/```json\\n?|```\\n?/g, '')\n      .replace(/^[\\s\\n]*\\{/g, '{')\n      .trim();\n    \n    // Parse JSON from LLM response\n    let invoiceData;\n    try {\n      invoiceData = JSON.parse(cleanContent);\n    } catch (e) {\n      throw new Error('Failed to parse Gemini response as JSON: ' + e.message + '\\nResponse: ' + cleanContent.substring(0, 200));\n    }\n    \n    // Get original file name\n    const fileName = item.json.fileName || $('Download File').first().json.name || 'unknown';\n    \n    // Validation 1: Check required fields\n    const requiredFields = ['invoiceNumber', 'invoiceDate', 'lineItems', 'totalAmount'];\n    const missingFields = requiredFields.filter(field => {\n      const value = invoiceData[field];\n      return value === null || value === undefined || value === '';\n    });\n    \n    const errors = [];\n    \n    if (missingFields.length > 0) {\n      errors.push(`Missing required fields: ${missingFields.join(', ')}`);\n    }\n    \n    // Validation 2: Calculate sum of line items\n    let calculatedTotal = 0;\n    if (invoiceData.lineItems && Array.isArray(invoiceData.lineItems)) {\n      calculatedTotal = invoiceData.lineItems.reduce((sum, lineItem) => {\n        const amount = lineItem.amount || (lineItem.quantity * lineItem.unitPrice) || 0;\n        return sum + amount;\n      }, 0);\n      \n      // Check if line item amounts match quantity × unitPrice\n      invoiceData.lineItems.forEach((item, idx) => {\n        const expectedAmount = (item.quantity || 0) * (item.unitPrice || 0);\n        const actualAmount = item.amount || 0;\n        const diff = Math.abs(expectedAmount - actualAmount);\n        \n        if (diff > 0.02 && item.quantity && item.unitPrice) {\n          errors.push(`Line item ${idx + 1}: Amount mismatch (${actualAmount} vs expected ${expectedAmount.toFixed(2)})`);\n        }\n      });\n    }\n    \n    // Allow for small floating point differences (0.02 for rounding)\n    const totalDifference = Math.abs(calculatedTotal - (invoiceData.totalAmount || 0));\n    const totalMatches = totalDifference < 0.02;\n    \n    if (!totalMatches && invoiceData.lineItems && invoiceData.lineItems.length > 0) {\n      errors.push(`Total amount mismatch: Calculated ${calculatedTotal.toFixed(2)} vs Stated ${invoiceData.totalAmount}`);\n    }\n    \n    // Validation 3: Check date format (YYYY-MM-DD)\n    const dateValid = invoiceData.invoiceDate && /^\\d{4}-\\d{2}-\\d{2}$/.test(invoiceData.invoiceDate);\n    if (!dateValid && invoiceData.invoiceDate) {\n      errors.push('Invalid date format (expected YYYY-MM-DD, got: ' + invoiceData.invoiceDate + ')');\n    }\n    \n    // Validation 4: Check numeric values\n    if (invoiceData.totalAmount && typeof invoiceData.totalAmount !== 'number') {\n      errors.push('Total amount must be a number');\n    }\n    \n    // Determine validation status\n    const validationStatus = errors.length === 0 ? 'VALID' : 'FAILED';\n    \n    items.push({\n      json: {\n        ...invoiceData,\n        fileName: fileName,\n        calculatedTotal: calculatedTotal,\n        validationStatus: validationStatus,\n        validationErrors: errors,\n        needsHumanReview: errors.length > 0,\n        processedAt: new Date().toISOString(),\n        extractionMethod: item.json.extractionMethod || 'unknown'\n      }\n    });\n    \n  } catch (error) {\n    // Error handling\n    const fileName = item.json.fileName || $('Download File').first().json.name || 'unknown';\n    \n    items.push({\n      json: {\n        fileName: fileName,\n        validationStatus: 'ERROR',\n        validationErrors: [error.message],\n        needsHumanReview: true,\n        processedAt: new Date().toISOString(),\n        rawResponse: JSON.stringify(item.json).substring(0, 500)\n      }\n    });\n  }\n}\n\nreturn items;"
+      },
+      "name": "Validate Invoice Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.validationStatus }}",
+              "value2": "VALID"
+            }
+          ]
+        }
+      },
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO invoices (\n  invoice_number,\n  invoice_date,\n  vendor_name,\n  total_amount,\n  currency,\n  file_name,\n  processed_at,\n  extraction_method,\n  line_items_json\n) VALUES (\n  '{{ $json.invoiceNumber }}',\n  '{{ $json.invoiceDate }}',\n  '{{ $json.vendorName }}',\n  {{ $json.totalAmount }},\n  '{{ $json.currency || \"USD\" }}',\n  '{{ $json.fileName }}',\n  '{{ $json.processedAt }}',\n  '{{ $json.extractionMethod }}',\n  '{{ JSON.stringify($json.lineItems) }}'\n) RETURNING id;",
+        "options": {}
+      },
+      "name": "Insert into PostgreSQL",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "3",
+          "name": "Supabase PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=-- Insert each line item linked to the invoice\nINSERT INTO invoice_line_items (\n  invoice_id,\n  description,\n  quantity,\n  unit_price,\n  amount\n)\nSELECT \n  {{ $('Insert into PostgreSQL').item.json.id }},\n  item->>'description',\n  (item->>'quantity')::numeric,\n  (item->>'unitPrice')::numeric,\n  (item->>'amount')::numeric\nFROM json_array_elements('{{ JSON.stringify($json.lineItems) }}'::json) AS item;",
+        "options": {}
+      },
+      "name": "Insert Line Items",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2440,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "3",
+          "name": "Supabase PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO invoice_review_queue (\n  file_name,\n  validation_status,\n  validation_errors,\n  raw_data,\n  created_at\n) VALUES (\n  '{{ $json.fileName }}',\n  '{{ $json.validationStatus }}',\n  '{{ JSON.stringify($json.validationErrors) }}',\n  '{{ JSON.stringify($json) }}',\n  NOW()\n) RETURNING id;",
+        "options": {}
+      },
+      "name": "Flag for Human Review",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [
+        2220,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "3",
+          "name": "Supabase PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_CHAT_ID",
+        "text": "=⚠️ *Invoice Validation Failed*\n\n*File:* `{{ $json.fileName }}`\n*Status:* {{ $json.validationStatus }}\n*Errors:*\n{{ $json.validationErrors.map(e => '• ' + e).join('\\n') }}\n\n*Review ID:* {{ $('Flag for Human Review').item.json.id }}\n\nPlease review in the admin dashboard.",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "name": "Send Telegram Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.1,
+      "position": [
+        2440,
+        400
+      ],
+      "credentials": {
+        "telegramApi": {
+          "id": "5",
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 🎯 FREE TIER Analyst Agent\n\n**Zero-Cost Architecture**\n\n### Stack:\n- 🤖 **Telegram Bot** (Free)\n- 👁️ **Google Cloud Vision** (1,000 units/month)\n- 🤖 **Gemini 1.5 Flash** (15 RPM free)\n- 🗄️ **Supabase** (500MB PostgreSQL free)\n\n### Process:\n1. Monitor Telegram Bot\n2. Route by file type (image vs PDF)\n3. Extract text (Vision API or PDF parser)\n4. Structure with Gemini\n5. Validate business rules\n6. Store in PostgreSQL or flag for review\n\n**Cost: $0/month** ✅",
+        "height": 464,
+        "width": 389,
+        "color": 4
+      },
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        140,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 📊 Supabase PostgreSQL Schema\n\n```sql\n-- Main invoices table\nCREATE TABLE invoices (\n  id SERIAL PRIMARY KEY,\n  invoice_number VARCHAR(100) UNIQUE NOT NULL,\n  invoice_date DATE NOT NULL,\n  vendor_name VARCHAR(255),\n  total_amount DECIMAL(12,2) NOT NULL,\n  currency VARCHAR(3) DEFAULT 'USD',\n  file_name VARCHAR(255),\n  processed_at TIMESTAMP DEFAULT NOW(),\n  extraction_method VARCHAR(50),\n  line_items_json JSONB,\n  created_at TIMESTAMP DEFAULT NOW()\n);\n\n-- Line items table (normalized)\nCREATE TABLE invoice_line_items (\n  id SERIAL PRIMARY KEY,\n  invoice_id INTEGER REFERENCES invoices(id) ON DELETE CASCADE,\n  description TEXT,\n  quantity DECIMAL(10,2),\n  unit_price DECIMAL(10,2),\n  amount DECIMAL(10,2),\n  created_at TIMESTAMP DEFAULT NOW()\n);\n\n-- Review queue for failed validations\nCREATE TABLE invoice_review_queue (\n  id SERIAL PRIMARY KEY,\n  file_name VARCHAR(255),\n  validation_status VARCHAR(50),\n  validation_errors JSONB,\n  raw_data JSONB,\n  created_at TIMESTAMP DEFAULT NOW(),\n  reviewed BOOLEAN DEFAULT FALSE,\n  reviewed_by VARCHAR(100),\n  reviewed_at TIMESTAMP,\n  resolution_notes TEXT\n);\n\n-- Indexes for performance\nCREATE INDEX idx_invoices_date ON invoices(invoice_date);\nCREATE INDEX idx_invoices_vendor ON invoices(vendor_name);\nCREATE INDEX idx_review_status ON invoice_review_queue(validation_status, reviewed);\n```\n\n**Setup:** Create a free Supabase project at https://supabase.com",
+        "height": 717,
+        "width": 463,
+        "color": 4
+      },
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2580,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## 🔑 Simplified Credential Setup\n\n### 1. Get Google AI API Key (One key for both!)\n**This single API key works for BOTH Gemini AND Cloud Vision!**\n\n- Go to: https://aistudio.google.com/app/apikey\n- Sign in with your personal Google account\n- Click \"Create API Key\"\n- Copy the key (starts with `AIza...`)\n\n**In n8n:**\n- Go to Credentials → Add Credential\n- Search for \"Google AI\" or \"Gemini\"\n- Paste your API key\n- Name it \"Google AI API Key\"\n\n✅ This key works for:\n  - Gemini 1.5 Flash (LLM)\n  - Google Cloud Vision API (OCR)\n\n### 2. Supabase PostgreSQL\n- Sign up: https://supabase.com\n- Create new project (free tier)\n- Go to Settings → Database\n- Copy \"Connection Pooling\" string\n- In n8n: Add \"Postgres\" credential\n- Format: \n  ```\n  Host: [your-project].pooler.supabase.com\n  Port: 6543\n  Database: postgres\n  User: postgres.[your-project]\n  Password: [your-password]\n  ```\n\n### 3. Telegram Bot (Trigger)\n- Open Telegram and search for \"@BotFather\"\n- Send command: `/newbot`\n- Follow instructions to get your **API Token**\n- In n8n: Add \"Telegram API\" credential\n- Paste the token\n- Done! ✅",
+        "height": 717,
+        "width": 389,
+        "color": 5
+      },
+      "name": "Sticky Note2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        3120,
+        140
+      ]
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Download Telegram File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Telegram File": {
+      "main": [
+        [
+          {
+            "node": "Normalize File Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize File Data": {
+      "main": [
+        [
+          {
+            "node": "Is Image or Scanned PDF?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Image or Scanned PDF?": {
+      "main": [
+        [
+          {
+            "node": "Google Cloud Vision OCR",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract PDF Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Cloud Vision OCR": {
+      "main": [
+        [
+          {
+            "node": "Format OCR Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract PDF Text": {
+      "main": [
+        [
+          {
+            "node": "Merge Paths",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Format OCR Output": {
+      "main": [
+        [
+          {
+            "node": "Merge Paths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Paths": {
+      "main": [
+        [
+          {
+            "node": "Gemini Extract Structured Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Extract Structured Data": {
+      "main": [
+        [
+          {
+            "node": "Validate Invoice Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Invoice Data": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "Insert into PostgreSQL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Flag for Human Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert into PostgreSQL": {
+      "main": [
+        [
+          {
+            "node": "Insert Line Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flag for Human Review": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-01-01T00:00:00.000Z",
+  "versionId": "2"
+}
