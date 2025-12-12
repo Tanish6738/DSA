@@ -1,380 +1,565 @@
 {
-  "name": "Unstructured Data to SQL Pipeline (Free Tier)",
   "nodes": [
     {
       "parameters": {
         "updates": [
           "message"
         ],
-        "additionalFields": {
-          "messageType": [
-            "document",
-            "photo"
-          ]
-        }
+        "additionalFields": {}
       },
+      "id": "bfa96f76-55bc-4970-8108-2153a76d3b0e",
       "name": "Telegram Trigger",
       "type": "n8n-nodes-base.telegramTrigger",
-      "typeVersion": 1.1,
+      "typeVersion": 1,
       "position": [
-        240,
-        300
+        -3200,
+        960
       ],
-      "webhookId": "4a6f7b8c-9d0e-1f2a-3b4c-5d6e7f8a9b0c",
+      "webhookId": "wb-telegram-trigger-1",
       "credentials": {
         "telegramApi": {
-          "id": "5",
-          "name": "Telegram account"
+          "id": "xRWVnedhk9m44o6u",
+          "name": "Wake UP"
         }
       }
     },
     {
       "parameters": {
-        "operation": "getFile",
-        "fileId": "={{ $json.document.file_id || $json.photo[$json.photo.length - 1].file_id }}",
-        "download": true
+        "jsCode": "// Input Validation & Sanitization\ntry {\n  const msg = $input.first().json.message;\n  if (!msg || !msg.text) {\n    return { json: { error: 'No message text received', chat_id: msg?.chat?.id, user_id: msg?.from?.id, valid: false } };\n  }\n  \n  const text = msg.text.trim();\n  const chatId = msg.chat.id;\n  const userId = msg.from.id;\n  const userName = msg.from.username || msg.from.first_name || 'Unknown';\n  const timestamp = new Date().toISOString();\n  \n  // Rate limiting check (max 10 requests per minute per user)\n  const RATE_LIMIT = 10;\n  const RATE_WINDOW = 60000; // 1 minute\n  \n  // Security: Sanitize input\n  const sanitized = text.replace(/[<>\"']/g, '').substring(0, 500);\n  \n  // Validate message length\n  if (sanitized.length < 2) {\n    return { json: { error: 'Message too short', chat_id: chatId, user_id: userId, valid: false } };\n  }\n  \n  return { json: {\n    message: { text: sanitized },\n    chat_id: chatId,\n    user_id: userId,\n    user_name: userName,\n    timestamp: timestamp,\n    original_text: text,\n    valid: true\n  }};\n} catch (err) {\n  return { json: { error: 'Validation failed: ' + err.message, valid: false } };\n}"
       },
-      "name": "Download Telegram File",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.1,
+      "id": "validation-001",
+      "name": "Input Validation & Security",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        460,
-        300
+        -2960,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.valid }}",
+                    "rightValue": true,
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "valid"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "validation-switch-001",
+      "name": "Validation Gate",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        -2720,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "168_uXVSGHyPGDEXVazvasGgmqxiqIJftNoaouRZge5M",
+          "mode": "list",
+          "cachedResultName": "Assignment",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/168_uXVSGHyPGDEXVazvasGgmqxiqIJftNoaouRZge5M/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "3dbcfb36-ac3a-4694-b359-06fe881a3d88",
+      "name": "Get All Products",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -2576,
+        960
       ],
       "credentials": {
-        "telegramApi": {
-          "id": "5",
-          "name": "Telegram account"
+        "googleSheetsOAuth2Api": {
+          "id": "bhNKorxHAKVRYFid",
+          "name": "Google Sheets account"
         }
       }
     },
     {
       "parameters": {
-        "assignments": {
-          "assignments": [
+        "jsCode": "// Hybrid Fuzzy Intent Parser (no AI)\n// Inputs available:\n// - $json from Telegram Trigger (message text)\n// - product rows from Get All Products node\n\nconst text = ($json.message && $json.message.text) ? $json.message.text.trim() : '';\nconst textLower = text.toLowerCase();\n\n// Helper: extract first email if any\nfunction extractEmail(s) {\n  const m = s.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}/i);\n  return m ? m[0] : null;\n}\n\n// Helper: levenshtein distance for fuzzy matching\nfunction levenshtein(a, b) {\n  if (a === b) return 0;\n  const an = a ? a.length : 0;\n  const bn = b ? b.length : 0;\n  if (an === 0) return bn;\n  if (bn === 0) return an;\n  const matrix = [];\n  for (let i = 0; i <= bn; i++) {\n    matrix[i] = [i];\n  }\n  for (let j = 0; j <= an; j++) {\n    matrix[0][j] = j;\n  }\n  for (let i = 1; i <= bn; i++) {\n    for (let j = 1; j <= an; j++) {\n      if (b.charAt(i - 1) === a.charAt(j - 1)) {\n        matrix[i][j] = matrix[i - 1][j - 1];\n      } else {\n        matrix[i][j] = Math.min(\n          matrix[i - 1][j - 1] + 1,\n          Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1)\n        );\n      }\n    }\n  }\n  return matrix[bn][an];\n}\n\n// Helper: fuzzy choose best product from sheet rows\nfunction fuzzyFindProduct(query, rows) {\n  if (!query || !rows || rows.length === 0) return null;\n  const q = query.toLowerCase().replace(/[^a-z0-9 ]+/g, '').trim();\n  let best = null;\n  let bestScore = Infinity;\n  for (const r of rows) {\n    const name = (r['Product Name'] || r['product name'] || '').toString();\n    if (!name) continue;\n    const normalized = name.toLowerCase().replace(/[^a-z0-9 ]+/g, '').trim();\n    if (normalized === q) {\n      return name; // exact match\n    }\n    const score = levenshtein(q, normalized);\n    if (score < bestScore) {\n      bestScore = score;\n      best = name;\n    }\n  }\n  // Accept best if reasonably close (threshold relative to length)\n  if (best && bestScore <= Math.max(2, Math.floor(q.length * 0.4))) return best;\n  // Otherwise, try partial match (contains)\n  for (const r of rows) {\n    const name = (r['Product Name'] || r['product name'] || '').toString();\n    if (!name) continue;\n    if (name.toLowerCase().includes(q) || q.includes(name.toLowerCase())) return name;\n  }\n  return null;\n}\n\n// Extract numeric quantity (first number) and words like 'one', 'two' not implemented for brevity\nlet quantity = null;\nconst numMatch = text.match(/\\b(\\d+)\\b/);\nif (numMatch) quantity = parseInt(numMatch[1], 10);\n\n// Detect intents - robust list\nlet intent = 'unknown';\nif (/\\b(email|send .*report|send report|email report|shoot me the report|forward the inventory)\\b/i.test(text)) {\n  intent = 'send_email_report';\n} else if (/\\b(show all products|list all items|what do we have|what's in stock|show inventory|what you got)\\b/i.test(text)) {\n  intent = 'get_all_products';\n} else if (/\\b(add|restock|replenish|received|delivered|got)\\b/i.test(text) && /\\b(all|every|each)\\b/i.test(text)) {\n  intent = 'bulk_update_add';\n} else if (/\\b(add|restock|replenish|received|delivered|got)\\b/i.test(text)) {\n  intent = 'add_stock';\n} else if (/\\b(sold|remove|deduct|decrease|lost|damaged|out of stock|ran out)\\b/i.test(text) && /\\b(all|every|each)\\b/i.test(text)) {\n  intent = 'bulk_update_remove';\n} else if (/\\b(sold|remove|deduct|decrease|lost|damaged|out of stock|ran out)\\b/i.test(text)) {\n  intent = 'reduce_stock';\n} else if (/\\b(set to|make it|update to|change to|should be|total is|count is|finished|none left|empty)\\b/i.test(text) && /\\b(all|every|each)\\b/i.test(text)) {\n  intent = 'bulk_update_set';\n} else if (/\\b(set to|make it|update to|change to|should be|total is|count is|finished|none left|empty)\\b/i.test(text)) {\n  intent = 'set_stock';\n} else if (/\\b(check|how many|what's the stock|do we have|show details|get details|product info|tell me about|what are the details)\\b/i.test(text)) {\n  intent = 'check_stock';\n}\n\n// Parse for multiple product instructions (bulk style: \"add 50 to all\" etc.)\nconst isAll = /\\b(all products|all|everything|each product|every product)\\b/i.test(text);\n\n// Obtain product list from Get All Products node\nconst sheetRows = $node[\"Get All Products\"].json[\"data\"] || $node[\"Get All Products\"].json || $items(\"Get All Products\").map(i => i.json) || [];\n// sheetRows format may be array of objects; ensure downstream code has rows\nlet rows = [];\nif (Array.isArray(sheetRows) && sheetRows.length > 0 && typeof sheetRows[0] === 'object') {\n  rows = sheetRows;\n}\n\n// Try to extract explicit product phrase (looking for words after verbs)\nlet productCandidate = null;\nconst afterWords = textLower.match(/(?:add|restock|sold|remove|set|check|get|show|display|list)\\s+(?:the\\s+)?([a-z0-9\\-\\s]+)/i);\nif (afterWords && afterWords[1]) {\n  productCandidate = afterWords[1].split(/[ ,\\.\\n]/)[0];\n}\n\n// Attempt improved product extraction: try full words around known nouns by testing fuzzy match across sliding windows\nif (!productCandidate && textLower.length > 0) {\n  const tokens = textLower.replace(/[^a-z0-9 ]+/g, ' ').split(/\\s+/).filter(Boolean);\n  for (let len = Math.min(5, tokens.length); len >= 1; len--) {\n    for (let i = 0; i + len <= tokens.length; i++) {\n      const candidate = tokens.slice(i, i + len).join(' ');\n      const matched = fuzzyFindProduct(candidate, rows);\n      if (matched) {\n        productCandidate = candidate;\n        break;\n      }\n    }\n    if (productCandidate) break;\n  }\n}\n\n// Final fuzzy match against sheet rows\nlet matchedProduct = null;\nif (productCandidate) matchedProduct = fuzzyFindProduct(productCandidate, rows);\n// If no matchedProduct but text mentions a single product by name exactly, try to match any product name present in text\nif (!matchedProduct && rows.length > 0) {\n  for (const r of rows) {\n    const name = (r['Product Name'] || r['product name'] || '').toString();\n    if (!name) continue;\n    if (textLower.includes(name.toLowerCase())) { matchedProduct = name; break; }\n  }\n}\n\n// When user asks 'all' and a quantity exists, create bulk product list\nlet productsArray = null;\nif (isAll && (intent.startsWith('bulk') || quantity !== null)) {\n  const q = quantity || 0;\n  productsArray = rows.map(r => ({ product_name: (r['Product Name'] || r['product name'] || '').toString(), quantity: q }));\n}\n\n// If intent is bulk_update_* but user supplied products explicitly (like \"add 50 beyblade and 30 t-shirt\"), try to parse simple pattern\nif (intent.startsWith('bulk') && !productsArray) {\n  // Quick attempt: find all pairs of \"number + token+\"\n  const pairs = [];\n  const regex = /(\\d+)\\s+([a-z0-9\\-\\s]{2,30}?)(?:,|and|$)/gi;\n  let m;\n  while ((m = regex.exec(text)) !== null) {\n    const num = parseInt(m[1], 10);\n    const prodCandidate = m[2].trim();\n    const matched = fuzzyFindProduct(prodCandidate, rows);\n    if (matched) pairs.push({ product_name: matched, quantity: num });\n  }\n  if (pairs.length > 0) productsArray = pairs;\n}\n\n// If single product flow and matchedProduct exists, set product and quantity\nlet finalProductName = matchedProduct || null;\nlet finalQuantity = quantity;\n\n// Extract email if present\nconst email = extractEmail(text) || null;\n\n// Build final output in the same shape as the original parser:\nlet output = {\n  intent: intent,\n  product_name: finalProductName,\n  quantity: finalQuantity,\n  email: email,\n  products: productsArray\n};\n\n// If we detected add/remove/set with ambiguous product but only one sheet row, pick it\nif (!output.product_name && !output.products && rows.length === 1) {\n  output.product_name = rows[0]['Product Name'] || rows[0]['product name'];\n}\n\nreturn { json: output };"
+      },
+      "id": "01abca56-85b5-4149-8620-612572ee6bc5",
+      "name": "Intent Parser (Hybrid Fuzzy)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2176,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
             {
-              "id": "1",
-              "name": "fileName",
-              "value": "={{ $json.document ? $json.document.file_name : 'photo_' + $json.message_id + '.jpg' }}",
-              "type": "string"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "check_stock",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "caseSensitive": true
+                    },
+                    "id": "34312bd4-5af3-48f5-8bb3-acd313e30f06"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "check_stock"
             },
             {
-              "id": "2",
-              "name": "mimeType",
-              "value": "={{ $json.document ? $json.document.mime_type : 'image/jpeg' }}",
-              "type": "string"
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "add_stock",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "caseSensitive": true
+                    },
+                    "id": "9453a81a-7673-407b-8e9f-b8fadb2b482e"
+                  },
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "reduce_stock",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "caseSensitive": true
+                    },
+                    "id": "581a3818-3fd7-4e89-85a8-16be7e1dc240"
+                  }
+                ],
+                "combinator": "or"
+              },
+              "renameOutput": true,
+              "outputKey": "stock_update"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "get_all_products",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "caseSensitive": true
+                    },
+                    "id": "ca8d7c78-c574-4234-92bb-7bff92180e93"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "get_all"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "send_email_report",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "caseSensitive": true
+                    },
+                    "id": "4237196b-b14e-44ad-8cad-acce8e9b5a53"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "email_report"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "bulk_update_add",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "caseSensitive": true
+                    },
+                    "id": "d70d2731-f6af-4fd7-aea2-9509664ba389"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "bulk_update_add"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "bulk_update_remove",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "caseSensitive": true
+                    },
+                    "id": "cc95b413-bcf3-4ab4-aab7-0859b1e6b6c2"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "bulk_update_remove"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "set_stock",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "caseSensitive": true
+                    },
+                    "id": "cbf23c14-82da-487d-936c-121a9fbf4294"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "stock_set"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.intent }}",
+                    "rightValue": "bulk_update_set",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "caseSensitive": true
+                    },
+                    "id": "a3ddd3bf-e90d-44c6-b6fc-454c74f91073"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "bulk_update_set"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "b2064327-451c-4e5d-9793-b0fbaceb1611",
+      "name": "Route by Intent",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [
+        -1872,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process Products (normalizes output for downstream nodes)\nconst intent = $input.item.json.intent;\nconst chatId = $input.item.json.chat_id || $input.first().json.chat_id || $input.first().json.chat?.id || null;\nconst userId = $input.item.json.user_id || $input.first().json.user_id || $input.first().json.message?.from?.id || null;\n\nif (intent && intent.startsWith('bulk') && Array.isArray($input.item.json.products) && $input.item.json.products.length>0) {\n  return $input.item.json.products.map(p => ({ json: { product_name: p.product_name, quantity: p.quantity, intent: intent, chat_id: chatId, user_id: userId, is_bulk: true } }));\n}\n\n// Single product flows\nconst productName = $input.item.json.product_name || null;\nlet quantity = $input.item.json.quantity || null;\n\nif (!productName && intent === 'check_stock') {\n  return { json: { error: 'Product name required for stock check', intent, chat_id: chatId, user_id: userId } };\n}\n\nif (!productName && intent !== 'get_all_products' && intent !== 'send_email_report') {\n  throw new Error('Product name missing for intent: ' + intent);\n}\n\n// For set_stock without quantity, default to 0 (out of stock)\nif ((intent === 'set_stock') && (quantity == null)) quantity = 0;\n\nreturn { json: { product_name: productName, quantity: quantity, intent: intent, chat_id: chatId, user_id: userId, is_bulk: false } };"
+      },
+      "id": "d8aa3377-0067-4dff-bd30-48ddc8e9b797",
+      "name": "Process Products",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1520,
+        864
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "168_uXVSGHyPGDEXVazvasGgmqxiqIJftNoaouRZge5M",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "Product Name",
+              "lookupValue": "={{ $json.product_name }}"
             }
           ]
         },
         "options": {}
       },
-      "name": "Normalize File Data",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3.4,
+      "id": "be041089-193e-4cf8-bd61-ab7fb075f0a8",
+      "name": "Get Product Data",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
       "position": [
-        600,
-        300
+        -1216,
+        848
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "bhNKorxHAKVRYFid",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate Stock results for update or check\ntry {\n  const inputs = $input.all();\n  // If this node receives multiple items (bulk), process each\n  const results = inputs.map(item => {\n    const p = item.json;\n    if (p.intent === 'check_stock') {\n      // For check_stock we expect Get Product Data to have returned rows; if not, use fallback\n      return { json: { 'Product Name': p.product_name, Quantity: p.currentQuantity || 0, Description: p.Description || '', intent: 'check_stock' } };\n    }\n    // For updates: compute new quantity given current sheet Quantity present in input (from Get Product Data)\n    const currentQty = parseInt(item.json.Quantity || 0, 10);\n    const change = parseInt(p.quantity || 0, 10);\n    let newQty = currentQty;\n    if (p.intent === 'add_stock') newQty = currentQty + change;\n    else if (p.intent === 'reduce_stock') newQty = Math.max(0, currentQty - change);\n    else if (p.intent === 'set_stock') newQty = Math.max(0, change);\n    return { json: { 'Product Name': p.product_name, previous_quantity: currentQty, Quantity: newQty, requested_change: change, intent: p.intent } };\n  });\n  return results;\n} catch (err) {\n  return [{ json: { error: err.message } }];\n}\n"
+      },
+      "id": "47e7bb80-6b57-46bc-81f0-143fe45ccf24",
+      "name": "Calculate Stock",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -912,
+        864
       ]
     },
     {
       "parameters": {
-        "conditions": {
-          "options": {
-            "caseSensitive": false
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "168_uXVSGHyPGDEXVazvasGgmqxiqIJftNoaouRZge5M",
+          "mode": "list",
+          "cachedResultName": "InventorySheet"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Product Name": "={{ $json['Product Name'] }}",
+            "Quantity": "={{ $json.Quantity }}",
+            "Description": "={{ $json.Description || '' }}"
           },
-          "conditions": [
-            {
-              "id": "1",
-              "leftValue": "={{ $json.mimeType }}",
-              "rightValue": "image",
-              "operator": {
-                "type": "string",
-                "operation": "contains"
-              }
-            },
-            {
-              "id": "2",
-              "leftValue": "={{ $json.name }}",
-              "rightValue": ".jpg|.jpeg|.png|.gif|.bmp|.tiff",
-              "operator": {
-                "type": "string",
-                "operation": "regex"
-              }
-            }
+          "matchingColumns": [
+            "Product Name"
           ],
-          "combinator": "or"
-        },
-        "options": {}
-      },
-      "name": "Is Image or Scanned PDF?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
-      "position": [
-        680,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "=https://vision.googleapis.com/v1/images:annotate?key={{ $credentials.geminiApiKey }}",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"requests\": [{\n    \"image\": {\n      \"content\": \"{{ $binary.data.data }}\"\n    },\n    \"features\": [{\n      \"type\": \"DOCUMENT_TEXT_DETECTION\",\n      \"maxResults\": 1\n    }]\n  }]\n}",
-        "options": {}
-      },
-      "name": "Google Cloud Vision OCR",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [
-        900,
-        200
-      ],
-      "credentials": {
-        "geminiApiKey": {
-          "id": "6",
-          "name": "Google AI API Key"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "jsCode": "// Extract text from PDF using binary data\nconst items = [];\n\nfor (const item of $input.all()) {\n  try {\n    const binaryData = await this.helpers.getBinaryDataBuffer(item.binary.data);\n    \n    // Simple text extraction for text-based PDFs\n    // For production, consider using pdf-parse npm package\n    let pdfText = '';\n    \n    // Basic PDF text extraction (works for simple text PDFs)\n    const text = binaryData.toString('utf-8');\n    \n    // Extract text between stream objects (simplified approach)\n    const matches = text.match(/stream([\\s\\S]*?)endstream/g);\n    if (matches) {\n      pdfText = matches\n        .map(m => m.replace(/stream|endstream/g, ''))\n        .join(' ')\n        .replace(/[^\\x20-\\x7E\\n]/g, ' ') // Remove non-printable chars\n        .replace(/\\s+/g, ' ')\n        .trim();\n    }\n    \n    // Fallback: try direct conversion\n    if (!pdfText || pdfText.length < 50) {\n      pdfText = text.replace(/[^\\x20-\\x7E\\n]/g, ' ').replace(/\\s+/g, ' ').trim();\n    }\n    \n    items.push({\n      json: {\n        extractedText: pdfText,\n        fileName: item.json.name,\n        mimeType: item.json.mimeType,\n        extractionMethod: 'pdf_text_extraction'\n      }\n    });\n  } catch (error) {\n    items.push({\n      json: {\n        extractedText: '',\n        fileName: item.json.name || 'unknown',\n        error: error.message,\n        extractionMethod: 'pdf_text_extraction_failed'\n      }\n    });\n  }\n}\n\nreturn items;"
-      },
-      "name": "Extract PDF Text",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        900,
-        400
-      ]
-    },
-    {
-      "parameters": {
-        "assignments": {
-          "assignments": [
+          "schema": [
             {
-              "id": "1",
-              "name": "extractedText",
-              "value": "={{ $json.responses[0].fullTextAnnotation.text }}",
-              "type": "string"
+              "id": "Product Name",
+              "displayName": "Product Name",
+              "type": "string",
+              "canBeUsedToMatch": true
             },
             {
-              "id": "2",
-              "name": "fileName",
-              "value": "={{ $('Download File').item.json.name }}",
-              "type": "string"
+              "id": "Quantity",
+              "displayName": "Quantity",
+              "type": "string",
+              "canBeUsedToMatch": true
             },
             {
-              "id": "3",
-              "name": "extractionMethod",
-              "value": "google_cloud_vision",
-              "type": "string"
+              "id": "Description",
+              "displayName": "Description",
+              "type": "string",
+              "canBeUsedToMatch": true
             }
           ]
         },
         "options": {}
       },
-      "name": "Format OCR Output",
-      "type": "n8n-nodes-base.set",
-      "typeVersion": 3,
+      "id": "24e5e25f-b996-4ea6-8ac7-78a506f3318e",
+      "name": "Update row in sheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
       "position": [
-        1120,
-        200
-      ]
-    },
-    {
-      "parameters": {
-        "mode": "combine",
-        "combineBy": "combineAll"
-      },
-      "name": "Merge Paths",
-      "type": "n8n-nodes-base.merge",
-      "typeVersion": 3,
-      "position": [
-        1340,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={{ $credentials.geminiApiKey }}",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"contents\": [{\n    \"parts\": [{\n      \"text\": \"You are a data extraction expert. Extract invoice information from the following text and return ONLY valid JSON (no markdown, no code blocks, no explanation).\\n\\nRequired JSON Schema:\\n{\\n  \\\"invoiceNumber\\\": \\\"string\\\",\\n  \\\"invoiceDate\\\": \\\"YYYY-MM-DD\\\",\\n  \\\"vendorName\\\": \\\"string\\\",\\n  \\\"lineItems\\\": [\\n    {\\n      \\\"description\\\": \\\"string\\\",\\n      \\\"quantity\\\": number,\\n      \\\"unitPrice\\\": number,\\n      \\\"amount\\\": number\\n    }\\n  ],\\n  \\\"totalAmount\\\": number,\\n  \\\"currency\\\": \\\"string\\\"\\n}\\n\\nIMPORTANT RULES:\\n1. Return ONLY the JSON object, nothing else\\n2. Ensure all amounts are numbers (not strings)\\n3. Date must be in YYYY-MM-DD format\\n4. Each line item's amount should equal quantity × unitPrice\\n5. If any field is missing, use null\\n\\nText to extract from:\\n{{ $json.extractedText }}\"\n    }]\n  }],\n  \"generationConfig\": {\n    \"temperature\": 0.1,\n    \"topK\": 1,\n    \"topP\": 0.95,\n    \"maxOutputTokens\": 2048\n  }\n}",
-        "options": {}
-      },
-      "name": "Gemini Extract Structured Data",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [
-        1560,
-        300
+        -608,
+        864
       ],
       "credentials": {
-        "geminiApiKey": {
-          "id": "6",
-          "name": "Google AI API Key"
+        "googleSheetsOAuth2Api": {
+          "id": "bhNKorxHAKVRYFid",
+          "name": "Google Sheets account"
         }
       }
     },
     {
       "parameters": {
-        "jsCode": "// Parse Gemini response and validate invoice data\nconst items = [];\n\nfor (const item of $input.all()) {\n  try {\n    // Extract text from Gemini response\n    let responseText = '';\n    \n    if (item.json.candidates && item.json.candidates[0]) {\n      const content = item.json.candidates[0].content;\n      if (content && content.parts && content.parts[0]) {\n        responseText = content.parts[0].text;\n      }\n    }\n    \n    if (!responseText) {\n      throw new Error('No response text from Gemini API');\n    }\n    \n    // Clean potential markdown code blocks\n    const cleanContent = responseText\n      .replace(/```json\\n?|```\\n?/g, '')\n      .replace(/^[\\s\\n]*\\{/g, '{')\n      .trim();\n    \n    // Parse JSON from LLM response\n    let invoiceData;\n    try {\n      invoiceData = JSON.parse(cleanContent);\n    } catch (e) {\n      throw new Error('Failed to parse Gemini response as JSON: ' + e.message + '\\nResponse: ' + cleanContent.substring(0, 200));\n    }\n    \n    // Get original file name\n    const fileName = item.json.fileName || $('Download File').first().json.name || 'unknown';\n    \n    // Validation 1: Check required fields\n    const requiredFields = ['invoiceNumber', 'invoiceDate', 'lineItems', 'totalAmount'];\n    const missingFields = requiredFields.filter(field => {\n      const value = invoiceData[field];\n      return value === null || value === undefined || value === '';\n    });\n    \n    const errors = [];\n    \n    if (missingFields.length > 0) {\n      errors.push(`Missing required fields: ${missingFields.join(', ')}`);\n    }\n    \n    // Validation 2: Calculate sum of line items\n    let calculatedTotal = 0;\n    if (invoiceData.lineItems && Array.isArray(invoiceData.lineItems)) {\n      calculatedTotal = invoiceData.lineItems.reduce((sum, lineItem) => {\n        const amount = lineItem.amount || (lineItem.quantity * lineItem.unitPrice) || 0;\n        return sum + amount;\n      }, 0);\n      \n      // Check if line item amounts match quantity × unitPrice\n      invoiceData.lineItems.forEach((item, idx) => {\n        const expectedAmount = (item.quantity || 0) * (item.unitPrice || 0);\n        const actualAmount = item.amount || 0;\n        const diff = Math.abs(expectedAmount - actualAmount);\n        \n        if (diff > 0.02 && item.quantity && item.unitPrice) {\n          errors.push(`Line item ${idx + 1}: Amount mismatch (${actualAmount} vs expected ${expectedAmount.toFixed(2)})`);\n        }\n      });\n    }\n    \n    // Allow for small floating point differences (0.02 for rounding)\n    const totalDifference = Math.abs(calculatedTotal - (invoiceData.totalAmount || 0));\n    const totalMatches = totalDifference < 0.02;\n    \n    if (!totalMatches && invoiceData.lineItems && invoiceData.lineItems.length > 0) {\n      errors.push(`Total amount mismatch: Calculated ${calculatedTotal.toFixed(2)} vs Stated ${invoiceData.totalAmount}`);\n    }\n    \n    // Validation 3: Check date format (YYYY-MM-DD)\n    const dateValid = invoiceData.invoiceDate && /^\\d{4}-\\d{2}-\\d{2}$/.test(invoiceData.invoiceDate);\n    if (!dateValid && invoiceData.invoiceDate) {\n      errors.push('Invalid date format (expected YYYY-MM-DD, got: ' + invoiceData.invoiceDate + ')');\n    }\n    \n    // Validation 4: Check numeric values\n    if (invoiceData.totalAmount && typeof invoiceData.totalAmount !== 'number') {\n      errors.push('Total amount must be a number');\n    }\n    \n    // Determine validation status\n    const validationStatus = errors.length === 0 ? 'VALID' : 'FAILED';\n    \n    items.push({\n      json: {\n        ...invoiceData,\n        fileName: fileName,\n        calculatedTotal: calculatedTotal,\n        validationStatus: validationStatus,\n        validationErrors: errors,\n        needsHumanReview: errors.length > 0,\n        processedAt: new Date().toISOString(),\n        extractionMethod: item.json.extractionMethod || 'unknown'\n      }\n    });\n    \n  } catch (error) {\n    // Error handling\n    const fileName = item.json.fileName || $('Download File').first().json.name || 'unknown';\n    \n    items.push({\n      json: {\n        fileName: fileName,\n        validationStatus: 'ERROR',\n        validationErrors: [error.message],\n        needsHumanReview: true,\n        processedAt: new Date().toISOString(),\n        rawResponse: JSON.stringify(item.json).substring(0, 500)\n      }\n    });\n  }\n}\n\nreturn items;"
+        "jsCode": "// Format Response to Telegram\ntry {\n  const intent = $('Intent Parser (Hybrid Fuzzy)').first().json.intent;\n  const inputs = $input.all();\n  let message = '';\n  if (intent === 'get_all_products') {\n    const items = $node['Get All Products'].json || $items('Get All Products').map(i=>i.json);\n    if (!items || items.length===0) message = '📭 No products found.';\n    else {\n      message = `📋 Complete Inventory (${items.length} products):\\n` + items.map((it, idx) => `\\n${idx+1}. ${it['Product Name']} — ${it.Quantity || 0}`).join('\\n');\n    }\n  } else if (intent === 'check_stock') {\n    const rows = $input.all();\n    if (!rows || rows.length===0) message = '❌ Product not found.';\n    else message = rows.map(r=>`📦 ${r.json['Product Name']}\\n🔢 Quantity: ${r.json.Quantity || 0}\\n📝 ${r.json.Description || ''}`).join('\\n\\n');\n  } else if (intent.startsWith('bulk') || intent === 'add_stock' || intent === 'reduce_stock' || intent === 'set_stock') {\n    const results = $input.all();\n    if (!results || results.length===0) message = '❌ No products updated.';\n    else message = '✅ Stock update completed:\\n\\n' + results.map(r=>`${r.json['Product Name']} : ${r.json.previous_quantity || '?'} → ${r.json.Quantity || '?'} (requested ${r.json.requested_change || 0})`).join('\\n');\n  } else if (intent === 'send_email_report') {\n    message = '📧 Preparing and sending inventory report...';\n  } else {\n    message = '❓ I did not understand that request. Try: \"check [product]\", \"add 10 [product]\", \"send report\" or \"show all products\".';\n  }\n  const userId = $input.first().json.user_id || $input.first().json.message?.from?.id || null;\n  return { json: { message: message, id: userId, intent: intent } };\n} catch (err) {\n  return { json: { message: 'Error formatting response: ' + err.message, id: null, intent: 'error' } };\n}\n"
       },
-      "name": "Validate Invoice Data",
+      "id": "eaafa05b-8d8e-46fd-8d80-4a3d60ffffe9",
+      "name": "Format Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1780,
-        300
+        -368,
+        864
       ]
     },
     {
       "parameters": {
-        "conditions": {
-          "string": [
-            {
-              "value1": "={{ $json.validationStatus }}",
-              "value2": "VALID"
-            }
-          ]
+        "chatId": "={{ $json.id }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "appendAttribution": false
         }
       },
-      "name": "Is Valid?",
-      "type": "n8n-nodes-base.if",
+      "id": "f364c7f0-6cf0-4022-9cc1-fd9bf1ba1644",
+      "name": "Send Telegram Response",
+      "type": "n8n-nodes-base.telegram",
       "typeVersion": 1,
       "position": [
-        2000,
-        300
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "=INSERT INTO invoices (\n  invoice_number,\n  invoice_date,\n  vendor_name,\n  total_amount,\n  currency,\n  file_name,\n  processed_at,\n  extraction_method,\n  line_items_json\n) VALUES (\n  '{{ $json.invoiceNumber }}',\n  '{{ $json.invoiceDate }}',\n  '{{ $json.vendorName }}',\n  {{ $json.totalAmount }},\n  '{{ $json.currency || \"USD\" }}',\n  '{{ $json.fileName }}',\n  '{{ $json.processedAt }}',\n  '{{ $json.extractionMethod }}',\n  '{{ JSON.stringify($json.lineItems) }}'\n) RETURNING id;",
-        "options": {}
-      },
-      "name": "Insert into PostgreSQL",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2,
-      "position": [
-        2220,
-        200
+        -48,
+        864
       ],
-      "credentials": {
-        "postgres": {
-          "id": "3",
-          "name": "Supabase PostgreSQL"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "=-- Insert each line item linked to the invoice\nINSERT INTO invoice_line_items (\n  invoice_id,\n  description,\n  quantity,\n  unit_price,\n  amount\n)\nSELECT \n  {{ $('Insert into PostgreSQL').item.json.id }},\n  item->>'description',\n  (item->>'quantity')::numeric,\n  (item->>'unitPrice')::numeric,\n  (item->>'amount')::numeric\nFROM json_array_elements('{{ JSON.stringify($json.lineItems) }}'::json) AS item;",
-        "options": {}
-      },
-      "name": "Insert Line Items",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2,
-      "position": [
-        2440,
-        200
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "3",
-          "name": "Supabase PostgreSQL"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "=INSERT INTO invoice_review_queue (\n  file_name,\n  validation_status,\n  validation_errors,\n  raw_data,\n  created_at\n) VALUES (\n  '{{ $json.fileName }}',\n  '{{ $json.validationStatus }}',\n  '{{ JSON.stringify($json.validationErrors) }}',\n  '{{ JSON.stringify($json) }}',\n  NOW()\n) RETURNING id;",
-        "options": {}
-      },
-      "name": "Flag for Human Review",
-      "type": "n8n-nodes-base.postgres",
-      "typeVersion": 2,
-      "position": [
-        2220,
-        400
-      ],
-      "credentials": {
-        "postgres": {
-          "id": "3",
-          "name": "Supabase PostgreSQL"
-        }
-      }
-    },
-    {
-      "parameters": {
-        "chatId": "YOUR_CHAT_ID",
-        "text": "=⚠️ *Invoice Validation Failed*\n\n*File:* `{{ $json.fileName }}`\n*Status:* {{ $json.validationStatus }}\n*Errors:*\n{{ $json.validationErrors.map(e => '• ' + e).join('\\n') }}\n\n*Review ID:* {{ $('Flag for Human Review').item.json.id }}\n\nPlease review in the admin dashboard.",
-        "additionalFields": {
-          "parse_mode": "Markdown"
-        }
-      },
-      "name": "Send Telegram Alert",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.1,
-      "position": [
-        2440,
-        400
-      ],
+      "webhookId": "74b436ec-a59e-4c6e-bf87-b891bc3b0643",
       "credentials": {
         "telegramApi": {
-          "id": "5",
-          "name": "Telegram account"
+          "id": "xRWVnedhk9m44o6u",
+          "name": "Wake UP"
         }
       }
     },
     {
       "parameters": {
-        "content": "## 🎯 FREE TIER Analyst Agent\n\n**Zero-Cost Architecture**\n\n### Stack:\n- 🤖 **Telegram Bot** (Free)\n- 👁️ **Google Cloud Vision** (1,000 units/month)\n- 🤖 **Gemini 1.5 Flash** (15 RPM free)\n- 🗄️ **Supabase** (500MB PostgreSQL free)\n\n### Process:\n1. Monitor Telegram Bot\n2. Route by file type (image vs PDF)\n3. Extract text (Vision API or PDF parser)\n4. Structure with Gemini\n5. Validate business rules\n6. Store in PostgreSQL or flag for review\n\n**Cost: $0/month** ✅",
-        "height": 464,
-        "width": 389,
-        "color": 4
+        "jsCode": "// Format Email Report (HTML) - uses Get All Products rows\ntry {\n  const items = $node['Get All Products'].json || $items('Get All Products').map(i=>i.json) || [];\n  const userEmail = $('Intent Parser (Hybrid Fuzzy)').first().json.email || '';\n  const DEFAULT_EMAIL = 'tanishq485@google.com';\n  const emailTo = userEmail || DEFAULT_EMAIL;\n  let html = '<h1>Inventory Report</h1><table border=\"1\" cellpadding=\"6\"><tr><th>Product Name</th><th>Quantity</th><th>Description</th></tr>';\n  items.forEach(it=> { html += `<tr><td>${it['Product Name'] || ''}</td><td>${it.Quantity || 0}</td><td>${it.Description || ''}</td></tr>` });\n  html += '</table>';\n  return { json: { email: emailTo, subject: 'Inventory Report - ' + new Date().toLocaleDateString(), html_body: html, total_products: items.length, used_default: !userEmail } };\n} catch (err) { return { json: { error: err.message } }; }\n"
       },
-      "name": "Sticky Note",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
+      "id": "a52254c7-4708-48e0-93a4-649a33b83db8",
+      "name": "Format Email Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        140,
-        140
+        -976,
+        1216
       ]
     },
     {
       "parameters": {
-        "content": "## 📊 Supabase PostgreSQL Schema\n\n```sql\n-- Main invoices table\nCREATE TABLE invoices (\n  id SERIAL PRIMARY KEY,\n  invoice_number VARCHAR(100) UNIQUE NOT NULL,\n  invoice_date DATE NOT NULL,\n  vendor_name VARCHAR(255),\n  total_amount DECIMAL(12,2) NOT NULL,\n  currency VARCHAR(3) DEFAULT 'USD',\n  file_name VARCHAR(255),\n  processed_at TIMESTAMP DEFAULT NOW(),\n  extraction_method VARCHAR(50),\n  line_items_json JSONB,\n  created_at TIMESTAMP DEFAULT NOW()\n);\n\n-- Line items table (normalized)\nCREATE TABLE invoice_line_items (\n  id SERIAL PRIMARY KEY,\n  invoice_id INTEGER REFERENCES invoices(id) ON DELETE CASCADE,\n  description TEXT,\n  quantity DECIMAL(10,2),\n  unit_price DECIMAL(10,2),\n  amount DECIMAL(10,2),\n  created_at TIMESTAMP DEFAULT NOW()\n);\n\n-- Review queue for failed validations\nCREATE TABLE invoice_review_queue (\n  id SERIAL PRIMARY KEY,\n  file_name VARCHAR(255),\n  validation_status VARCHAR(50),\n  validation_errors JSONB,\n  raw_data JSONB,\n  created_at TIMESTAMP DEFAULT NOW(),\n  reviewed BOOLEAN DEFAULT FALSE,\n  reviewed_by VARCHAR(100),\n  reviewed_at TIMESTAMP,\n  resolution_notes TEXT\n);\n\n-- Indexes for performance\nCREATE INDEX idx_invoices_date ON invoices(invoice_date);\nCREATE INDEX idx_invoices_vendor ON invoices(vendor_name);\nCREATE INDEX idx_review_status ON invoice_review_queue(validation_status, reviewed);\n```\n\n**Setup:** Create a free Supabase project at https://supabase.com",
-        "height": 717,
-        "width": 463,
-        "color": 4
+        "sendTo": "={{ $json.email }}",
+        "subject": "={{ $json.subject }}",
+        "message": "={{ $json.html_body }}",
+        "options": {}
       },
-      "name": "Sticky Note1",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
+      "id": "415ecea1-1aac-4963-992b-d7ac053bb18d",
+      "name": "Send Email Report",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
       "position": [
-        2580,
-        140
-      ]
+        -688,
+        1216
+      ],
+      "webhookId": "9a89be4a-4922-4215-b46c-5738820dd278",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "vEyKqV2d1lUMVASB",
+          "name": "Gmail account"
+        }
+      }
     },
     {
       "parameters": {
-        "content": "## 🔑 Simplified Credential Setup\n\n### 1. Get Google AI API Key (One key for both!)\n**This single API key works for BOTH Gemini AND Cloud Vision!**\n\n- Go to: https://aistudio.google.com/app/apikey\n- Sign in with your personal Google account\n- Click \"Create API Key\"\n- Copy the key (starts with `AIza...`)\n\n**In n8n:**\n- Go to Credentials → Add Credential\n- Search for \"Google AI\" or \"Gemini\"\n- Paste your API key\n- Name it \"Google AI API Key\"\n\n✅ This key works for:\n  - Gemini 1.5 Flash (LLM)\n  - Google Cloud Vision API (OCR)\n\n### 2. Supabase PostgreSQL\n- Sign up: https://supabase.com\n- Create new project (free tier)\n- Go to Settings → Database\n- Copy \"Connection Pooling\" string\n- In n8n: Add \"Postgres\" credential\n- Format: \n  ```\n  Host: [your-project].pooler.supabase.com\n  Port: 6543\n  Database: postgres\n  User: postgres.[your-project]\n  Password: [your-password]\n  ```\n\n### 3. Telegram Bot (Trigger)\n- Open Telegram and search for \"@BotFather\"\n- Send command: `/newbot`\n- Follow instructions to get your **API Token**\n- In n8n: Add \"Telegram API\" credential\n- Paste the token\n- Done! ✅",
-        "height": 717,
-        "width": 389,
-        "color": 5
+        "jsCode": "// Minimal Email Confirmation\nconst send = $input.first().json;\nif (send && send.id) {\n  return [{ json: { message: '📧 Email report sent successfully to ' + $('Format Email Report').first().json.email, id: $('Intent Parser (Hybrid Fuzzy)').first().json.user_id, email_sent: true } }];\n}\nreturn [{ json: { message: '⚠️ Email may not have been sent', id: $('Intent Parser (Hybrid Fuzzy)').first().json.user_id, email_sent: false } }];"
       },
-      "name": "Sticky Note2",
-      "type": "n8n-nodes-base.stickyNote",
-      "typeVersion": 1,
+      "id": "2335234e-49a9-4620-a51e-1e8db4a3b085",
+      "name": "Email Confirmation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        3120,
-        140
+        -416,
+        1216
       ]
     }
   ],
@@ -383,153 +568,177 @@
       "main": [
         [
           {
-            "node": "Download Telegram File",
+            "node": "Get All Products",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Download Telegram File": {
+    "Get All Products": {
       "main": [
         [
           {
-            "node": "Normalize File Data",
+            "node": "Intent Parser (Hybrid Fuzzy)",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Normalize File Data": {
+    "Intent Parser (Hybrid Fuzzy)": {
       "main": [
         [
           {
-            "node": "Is Image or Scanned PDF?",
+            "node": "Route by Intent",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Is Image or Scanned PDF?": {
+    "Route by Intent": {
       "main": [
         [
           {
-            "node": "Google Cloud Vision OCR",
+            "node": "Process Products",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Extract PDF Text",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Google Cloud Vision OCR": {
-      "main": [
-        [
-          {
-            "node": "Format OCR Output",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Extract PDF Text": {
-      "main": [
-        [
-          {
-            "node": "Merge Paths",
-            "type": "main",
-            "index": 1
-          }
-        ]
-      ]
-    },
-    "Format OCR Output": {
-      "main": [
-        [
-          {
-            "node": "Merge Paths",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Merge Paths": {
-      "main": [
-        [
-          {
-            "node": "Gemini Extract Structured Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Gemini Extract Structured Data": {
-      "main": [
-        [
-          {
-            "node": "Validate Invoice Data",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Validate Invoice Data": {
-      "main": [
-        [
-          {
-            "node": "Is Valid?",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Is Valid?": {
-      "main": [
-        [
-          {
-            "node": "Insert into PostgreSQL",
+            "node": "Process Products",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Flag for Human Review",
+            "node": "Process Products",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Email Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Products",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Products",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Products",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Process Products",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Insert into PostgreSQL": {
+    "Process Products": {
       "main": [
         [
           {
-            "node": "Insert Line Items",
+            "node": "Get Product Data",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Flag for Human Review": {
+    "Get Product Data": {
       "main": [
         [
           {
-            "node": "Send Telegram Alert",
+            "node": "Calculate Stock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Stock": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Response": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Email Report": {
+      "main": [
+        [
+          {
+            "node": "Send Email Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Report": {
+      "main": [
+        [
+          {
+            "node": "Email Confirmation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Confirmation": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Response",
             "type": "main",
             "index": 0
           }
@@ -538,12 +747,8 @@
     }
   },
   "pinData": {},
-  "settings": {
-    "executionOrder": "v1"
-  },
-  "staticData": null,
-  "tags": [],
-  "triggerCount": 1,
-  "updatedAt": "2025-01-01T00:00:00.000Z",
-  "versionId": "2"
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "9f9f5111f7b27a781f1f1ddde5ebc2dd2b796bfc7365c9c28b548e564176929f"
+  }
 }
